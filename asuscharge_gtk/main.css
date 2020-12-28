@@ -1,0 +1,15 @@
+.high highlight:not(:disabled) {
+    background-image: image(@error_color);
+}
+
+.mid highlight:not(:disabled) {
+    background-image: image(@warning_color);
+}
+
+highlight:not(:disabled) {
+    transition: background-image 500ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+scale contents {
+    padding: 6px;
+}
