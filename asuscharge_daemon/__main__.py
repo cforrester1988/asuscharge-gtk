@@ -1,18 +1,10 @@
+#!/usr/bin/env python
+
 import asuscharge
 import asyncio
 import configparser
 import os
-
-from sys import argv, exit
-
-
-if (
-    not asuscharge.supported_platform()
-    or not asuscharge.supported_kernel()
-    or not asuscharge.module_loaded()
-):
-    print(f"{argv[0]} is not supported on this system.")
-    exit()
+import sys
 
 from dbus_next.aio import MessageBus
 from dbus_next.constants import BusType
@@ -44,7 +36,11 @@ class ChargeControlService(ServiceInterface):
                     )
                 os.remove(THRESHOLD_FILE)
             except FileNotFoundError:
-                pass
+                print("Unable to find saved charge threshold state.")
+                with open(THRESHOLD_FILE, "w") as f:
+                    f.write(str(self.ChargeEndThreshold))
+                    f.flush()
+                    print(f"Saved charge threshold state: {self.ChargeEndThreshold}%")
 
     @dbus_property()
     def ChargeEndThreshold(self) -> DBus_Int:
@@ -56,6 +52,10 @@ class ChargeControlService(ServiceInterface):
             return
         else:
             self.charge_controller.end_threshold = value
+            if self.config["DEFAULT"].getboolean("PersistBetweenReboots"):
+                with open(THRESHOLD_FILE, "w") as f:
+                    f.write(str(self.charge_controller.end_threshold))
+                    f.flush()
             self.emit_properties_changed(
                 {"ChargeEndThreshold": self.charge_controller.end_threshold}
             )
@@ -72,6 +72,10 @@ class ChargeControlService(ServiceInterface):
             self.config["DEFAULT"]["PersistBetweenReboots"] = "yes"
         else:
             self.config["DEFAULT"]["PersistBetweenReboots"] = "no"
+            try:
+                os.remove(THRESHOLD_FILE)
+            except FileNotFoundError:
+                pass
         with open(CONFIG_FILE, "w") as f:
             self.config.write(f)
             f.flush()
@@ -100,5 +104,15 @@ async def main():
         config.write(f)
         f.flush()
 
+
+if (
+    not asuscharge.supported_platform()
+    or not asuscharge.supported_kernel()
+    or not asuscharge.module_loaded()
+):
+    print(
+        f"{sys.argv[0]} is not supported on this system. Platform=Linux: {asuscharge.supported_platform()}. Kernel>=5.4: {asuscharge.supported_kernel()}. asus_nb_wmi module loaded: {asuscharge.module_loaded()}."
+    )
+    sys.exit(-1)
 
 asyncio.get_event_loop().run_until_complete(main())
