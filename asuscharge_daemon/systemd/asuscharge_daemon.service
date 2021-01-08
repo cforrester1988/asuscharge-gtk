@@ -1,0 +1,12 @@
+[Unit]
+Description=D-Bus service for managing the maximum charge level on recent ASUS
+notebooks.
+
+[Service]
+Type=dbus
+BusName=ca.cforrester.AsusCharge.Daemon
+ExecStart=/usr/bin/asuscharge_daemon
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

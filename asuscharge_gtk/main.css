@@ -1,3 +1,6 @@
+/* These rules change the charge control slider's colour to provide
+visual feedback for the battery charge threshold. */
+
 .high highlight:not(:disabled) {
     background-image: image(@error_color);
 }
@@ -9,6 +12,21 @@
 highlight:not(:disabled) {
     transition: background-image 500ms cubic-bezier(0, 0, 0.2, 1);
 }
+
+.high slider:not(:disabled) {
+    border-color: @error_color;
+}
+
+.mid slider:not(:disabled) {
+    border-color: @warning_color;
+    color: @warning_color;
+}
+
+slider:not(:disabled) {
+    transition: border-color 500ms cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* Ensure the value has enough padding to show properly on all themes. */
 
 scale contents {
     padding: 6px;

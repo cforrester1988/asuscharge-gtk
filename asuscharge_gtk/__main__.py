@@ -1,19 +1,18 @@
-import asyncio
+import asuscharge
 import gi
 
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 
-from os.path import abspath, dirname, join
-from os import getuid
-from sys import argv, exit
-from typing import Type
-from platform import system, release
+from asuscharge_gtk._version import __version__
+from dbus_next import BusType, DBusError
+from dbus_next.glib import MessageBus
+from dbus_next.constants import BusType
 from gi.repository import Gdk, Gtk, Gio, GObject
+from os.path import abspath, dirname, join
+from platform import system, release
+from sys import argv, exit
 
-from ._version import __version__
-
-import asuscharge
 
 _MIN_KERNEL_VERSION = "5.4"
 _ASUS_MODULE_NAME = "asus_nb_wmi"
@@ -50,73 +49,83 @@ class Application(Gtk.Application):
         self.controller = asuscharge.ChargeThresholdController()
         self.builder = Gtk.Builder()
         self.builder.add_from_file(join(_CURRENT_PATH, "main.glade"))
+        self.builder.connect_signals(self)
         self.css = Gtk.CssProvider()
         self.css.load_from_path(join(_CURRENT_PATH, "main.css"))
-
         main_window: Gtk.Window = self.builder.get_object("MainWindow")
-        main_window.connect("destroy", Gtk.main_quit)
+        try:
+            bus = MessageBus(bus_type=BusType.SYSTEM).connect_sync()
+            introspection = bus.introspect_sync(
+                "ca.cforrester.AsusCharge.Daemon", "/ca/cforrester/AsusCharge"
+            )
+            proxy = bus.get_proxy_object(
+                "ca.cforrester.AsusCharge.Daemon",
+                "/ca/cforrester/AsusCharge",
+                introspection,
+            )
+            self.interface = proxy.get_interface("ca.cforrester.AsusCharge.Daemon")
+        except DBusError as e:
+            error_dialog: Gtk.Dialog = self.builder.get_object("DBusErrorDialog")
+            error_dialog.connect("close", self.onMainDestroy)
+            error_close_button: Gtk.Button = self.builder.get_object("ErrorCloseButton")
+            error_close_button.connect("clicked", self.onMainDestroy)
+            exception_text_buf: Gtk.TextBuffer = self.builder.get_object(
+                "ExceptionBuffer"
+            )
+            exception_text_buf.set_text(str(e))
+            error_dialog.present()
+        else:
+            reboot_persist_checkbox: Gtk.CheckButton = self.builder.get_object(
+                "RebootPersistCheckbox"
+            )
+            reboot_persist_checkbox.set_active(
+                bool(self.interface.get_persist_between_reboots_sync())
+            )
+            # Used to dynamically show/hide the label as the scale moves.
+            self.warning_label: Gtk.Label = self.builder.get_object("WarningLabel")
 
-        aboutButton: Gtk.Button = self.builder.get_object("AboutButton")
-        aboutButton.connect("clicked", self.show_about)
+            self.charge_scale: Gtk.Scale = self.builder.get_object("ChargeScale")
+            self.charge_scale.connect(
+                "format-value", lambda scale, value, user_data=None: f"{int(value)}%"
+            )
+            self.charge_scale.add_mark(100.0, Gtk.PositionType.RIGHT)
+            self.charge_scale.add_mark(90.0, Gtk.PositionType.RIGHT)
+            self.charge_scale.add_mark(80.0, Gtk.PositionType.RIGHT)
+            self.charge_scale.add_mark(70.0, Gtk.PositionType.RIGHT)
+            self.charge_scale.add_mark(60.0, Gtk.PositionType.RIGHT)
+            self.charge_scale.get_style_context().add_provider_for_screen(
+                Gdk.Screen.get_default(),
+                self.css,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+            self.scale_con: Gtk.StyleContext = self.charge_scale.get_style_context()
 
-        unlock_infobar: Gtk.InfoBar = self.builder.get_object("UnlockInfoBar")
-        unlock_infobar.set_revealed(True)
-        unlock_button: Gtk.Button = self.builder.get_object("UnlockButton")
-        unlock_button.connect("clicked", self.unlock_button_clicked)
+            self.update_threshold()
+            main_window.present()
 
-        charge_scale: Gtk.Scale = self.builder.get_object("ChargeScale")
-        charge_scale.connect(
-            "format-value", lambda scale, value, user_data=None: f"{int(value)}%"
-        )
-        charge_scale.add_mark(100.0, Gtk.PositionType.RIGHT)
-        charge_scale.add_mark(80.0, Gtk.PositionType.RIGHT)
-        charge_scale.add_mark(60.0, Gtk.PositionType.RIGHT)
-        charge_scale.get_style_context().add_provider_for_screen(
-            Gdk.Screen.get_default(), self.css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
-        )
-        charge_adj: Gtk.Adjustment = self.builder.get_object("ChargeAdjustment")
-        charge_adj.connect("value-changed", self.scale_moved)
-        self.builder.get_object("FullCapBox").connect(
-            "button-press-event", self.press_scale_label
-        )
-        self.builder.get_object("BalancedBox").connect(
-            "button-press-event", self.press_scale_label
-        )
-        self.builder.get_object("BetterLifeBox").connect(
-            "button-press-event", self.press_scale_label
-        )
+    def onMainDestroy(self, user_data) -> None:
+        Gtk.main_quit()
 
-        self.update_threshold()
-        main_window.present()
+    def RebootPersistCheckbox_toggled_cb(self, checkbutton: Gtk.CheckButton) -> None:
+        self.interface.set_persist_between_reboots_sync(bool(checkbutton.get_active()))
 
-    def show_about(self, button: Gtk.Button) -> None:
+    def AboutButton_clicked_cb(self, button: Gtk.Button) -> None:
         about_window: Gtk.AboutDialog = self.builder.get_object("AboutWindow")
         about_window.set_version(_VERSION)
         about_window.run()
         about_window.hide()
 
-    def unlock_button_clicked(self, button: Gtk.Button) -> None:
-        charge_scale: Gtk.Scale = self.builder.get_object("ChargeScale")
-        unlock_infobar: Gtk.InfoBar = self.builder.get_object("UnlockInfoBar")
-        scheduler_button: Gtk.Button = self.builder.get_object("SchedulerButton")
-        charge_scale.set_sensitive(True)
-        unlock_infobar.set_revealed(False)
-        scheduler_button.set_sensitive(True)
-
-    def set_scale_colour(self) -> None:
-        charge_scale: Gtk.Scale = self.builder.get_object("ChargeScale")
-        scale_con: Gtk.StyleContext = charge_scale.get_style_context()
-        if (val := charge_scale.get_value()) > 90:
-            scale_con.remove_class("mid")
-            scale_con.add_class("high")
-        elif val > 80:
-            scale_con.remove_class("high")
-            scale_con.add_class("mid")
+    def ChargeScale_value_changed_cb(self, scale: Gtk.Scale) -> None:
+        if not (value := int(scale.get_value())) in (60, 80, 100):
+            self.warning_label.set_visible(visible=True)
         else:
-            scale_con.remove_class("mid")
-            scale_con.remove_class("high")
+            self.warning_label.set_visible(visible=False)
+        self.set_scale_colour()
+        self.interface.set_charge_end_threshold_sync(value)
 
-    def press_scale_label(self, box: Gtk.EventBox, user_data: TObject = None) -> None:
+    def ScaleLabel_pressed_cb(
+        self, box: Gtk.EventBox, user_data: TObject = None
+    ) -> None:
         if self.builder.get_object("ChargeScale").is_sensitive():
             charge_adj: Gtk.Adjustment = self.builder.get_object("ChargeAdjustment")
             if (name := box.get_name()) == "FullCapBox":
@@ -126,18 +135,28 @@ class Application(Gtk.Application):
             elif name == "BetterLifeBox":
                 charge_adj.set_value(60)
 
-    def scale_moved(self, scale: Gtk.Scale) -> None:
-        label: Gtk.Label = self.builder.get_object("WarningLabel")
-        if not scale.get_value() in (60, 80, 100):
-            label.set_visible(visible=True)
-        else:
-            label.set_visible(visible=False)
-        self.set_scale_colour()
-
     def update_threshold(self) -> None:
         charge_adj: Gtk.Adjustment = self.builder.get_object("ChargeAdjustment")
         charge_adj.set_value(self.controller.end_threshold)
         self.set_scale_colour()
+
+    def set_scale_colour(self) -> None:
+        if (val := self.charge_scale.get_value()) > 90:
+            self.scale_con.remove_class("mid")
+            self.scale_con.add_class("high")
+        elif val > 80:
+            self.scale_con.remove_class("high")
+            self.scale_con.add_class("mid")
+        else:
+            self.scale_con.remove_class("mid")
+            self.scale_con.remove_class("high")
+
+    def AddScheduleButton_clicked_cb(self, button: Gtk.Button):
+        add_dialog: Gtk.Dialog = self.builder.get_object("AddScheduleItemDialog")
+        cancel_button: Gtk.Button = self.builder.get_object("CancelAddButton")
+        response = add_dialog.run()
+        print(response)
+        add_dialog.hide()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # type: ignore
 from setuptools import find_packages, setup
-from asuscharge_gtk import __version__ as version
+from asuscharge_gtk._version import __version__ as version
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
