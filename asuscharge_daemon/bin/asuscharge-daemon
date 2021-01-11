@@ -14,12 +14,15 @@ from dbus_next.service import ServiceInterface, dbus_property, method
 DBUS_NAME = "ca.cforrester.AsusCharge.Daemon"
 DBUS_PATH = "/ca/cforrester/AsusCharge"
 DBUS_INTERFACE = "ca.cforrester.AsusCharge.Daemon"
-CONFIG_PATH = "/var/lib/asuscharge_daemon/"
-CONFIG_FILE = f"{CONFIG_PATH}asuscharge_daemon.conf"
-THRESHOLD_FILE = f"{CONFIG_PATH}charge_control_end_threshold"
+VAR = "/var/lib/asuscharge_daemon/"
+THRESHOLD_FILE = f"{VAR}charge_control_end_threshold"
+CONFIG_FILE = f"{VAR}asuscharge_daemon.conf"
+SECTION = "DEFAULT"
+PERSIST_BETWEEN_REBOOTS = "PersistBetweenReboots"
+PERSIST_BETWEEN_REBOOTS_DEFAULT = "yes"
 
-DBus_Int = "i"
-DBus_Bool = "b"
+DBUS_INT = "i"
+DBUS_BOOL = "b"
 
 
 class ChargeControlService(ServiceInterface):
@@ -27,7 +30,7 @@ class ChargeControlService(ServiceInterface):
         super().__init__(name)
         self.config = config
         self.charge_controller = asuscharge.ChargeThresholdController()
-        if self.config["DEFAULT"].getboolean("PersistBetweenReboots"):
+        if self.config[SECTION].getboolean(PERSIST_BETWEEN_REBOOTS):
             try:
                 with open(THRESHOLD_FILE, "r") as f:
                     self.ChargeEndThreshold = int(f.read())
@@ -41,18 +44,24 @@ class ChargeControlService(ServiceInterface):
                     f.write(str(self.ChargeEndThreshold))
                     f.flush()
                     print(f"Saved charge threshold state: {self.ChargeEndThreshold}%")
+        else:
+            # Delete the saved threshold if it shouldn't exist.
+            try:
+                os.remove(THRESHOLD_FILE)
+            except FileNotFoundError:
+                pass
 
     @dbus_property()
-    def ChargeEndThreshold(self) -> DBus_Int:
+    def ChargeEndThreshold(self) -> DBUS_INT:
         return self.charge_controller.end_threshold
 
     @ChargeEndThreshold.setter
-    def ChargeEndThreshold(self, value: DBus_Int) -> None:
+    def ChargeEndThreshold(self, value: DBUS_INT) -> None:
         if self.charge_controller.end_threshold == value:
             return
         else:
             self.charge_controller.end_threshold = value
-            if self.config["DEFAULT"].getboolean("PersistBetweenReboots"):
+            if self.config[SECTION].getboolean(PERSIST_BETWEEN_REBOOTS):
                 with open(THRESHOLD_FILE, "w") as f:
                     f.write(str(self.charge_controller.end_threshold))
                     f.flush()
@@ -61,17 +70,17 @@ class ChargeControlService(ServiceInterface):
             )
 
     @dbus_property()
-    def PersistBetweenReboots(self) -> DBus_Bool:
-        return self.config["DEFAULT"].getboolean("PersistBetweenReboots")
+    def PersistBetweenReboots(self) -> DBUS_BOOL:
+        return self.config[SECTION].getboolean(PERSIST_BETWEEN_REBOOTS)
 
     @PersistBetweenReboots.setter
-    def PersistBetweenReboots(self, value: DBus_Bool) -> None:
-        if value == self.config["DEFAULT"].getboolean("PersistBetweenReboots"):
+    def PersistBetweenReboots(self, value: DBUS_BOOL) -> None:
+        if value == self.config[SECTION].getboolean(PERSIST_BETWEEN_REBOOTS):
             return
         elif value:
-            self.config["DEFAULT"]["PersistBetweenReboots"] = "yes"
+            self.config[SECTION][PERSIST_BETWEEN_REBOOTS] = "yes"
         else:
-            self.config["DEFAULT"]["PersistBetweenReboots"] = "no"
+            self.config[SECTION][PERSIST_BETWEEN_REBOOTS] = "no"
             try:
                 os.remove(THRESHOLD_FILE)
             except FileNotFoundError:
@@ -81,8 +90,8 @@ class ChargeControlService(ServiceInterface):
             f.flush()
         self.emit_properties_changed(
             {
-                "PersistBetweenReboots": self.config["DEFAULT"].getboolean(
-                    "PersistBetweenReboots"
+                "PersistBetweenReboots": self.config[SECTION].getboolean(
+                    PERSIST_BETWEEN_REBOOTS
                 ),
             }
         )
@@ -90,11 +99,12 @@ class ChargeControlService(ServiceInterface):
 
 async def main():
     config = configparser.ConfigParser()
-    config["DEFAULT"]["PersistBetweenReboots"] = "yes"
+    config[SECTION][PERSIST_BETWEEN_REBOOTS] = PERSIST_BETWEEN_REBOOTS_DEFAULT
     if config.read(CONFIG_FILE) == []:
         print(f"Config file not found. Generating a default config to {CONFIG_FILE}")
         with open(CONFIG_FILE, "w") as f:
             config.write(f)
+            f.flush()
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     interface = ChargeControlService(DBUS_INTERFACE, config)
     bus.export(DBUS_PATH, interface)

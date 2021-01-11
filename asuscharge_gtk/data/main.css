@@ -27,7 +27,11 @@ slider:not(:disabled) {
 }
 
 /* Ensure the value has enough padding to show properly on all themes. */
-
 scale contents {
     padding: 6px;
+}
+
+/* Make clock spinbuttons very large. */
+.clock {
+    font-size: 450%;
 }
